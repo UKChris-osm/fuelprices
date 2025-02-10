@@ -1,0 +1,62 @@
+"dataurls":[
+  {
+    "retailerName":"Applegreen UK",
+    "retailerURL":"https://applegreenstores.com/fuel-prices/data.json"
+  },
+  {
+    "retailerName":"Ascona Group",
+    "retailerURL":"https://fuelprices.asconagroup.co.uk/newfuel.json"
+  },
+  {
+    "retailerName":"Asda",
+    "retailerURL":"https://storelocator.asda.com/fuel_prices_data.json"
+  },
+  {
+    "retailerName":"bp",
+    "retailerURL":"https://www.bp.com/en_gb/united-kingdom/home/fuelprices/fuel_prices_data.json"
+  },
+  {
+    "retailerName":"Esso Tesco Alliance",
+    "retailerURL":"https://fuelprices.esso.co.uk/latestdata.json"
+  },
+  {
+    "retailerName":"JET Retail UK",
+    "retailerURL":"https://jetlocal.co.uk/fuel_prices_data.json"
+  },
+  {
+    "retailerName":"Karan Retail Ltd",
+    "retailerURL":"https://api2.krlmedia.com/integration/live_price/krl"
+  },
+  {
+    "retailerName":"Morrisons",
+    "retailerURL":"https://www.morrisons.com/fuel-prices/fuel.json"
+  },
+  {
+    "retailerName":"Moto",
+    "retailerURL":"https://moto-way.com/fuel-price/fuel_prices.json"
+  },
+  {
+    "retailerName":"Motor Fuel Group",
+    "retailerURL":"https://fuel.motorfuelgroup.com/fuel_prices_data.json"
+  },
+  {
+    "retailerName":"Rontec",
+    "retailerURL":"https://www.rontec-servicestations.co.uk/fuel-prices/data/fuel_prices_data.json"
+  },
+  {
+    "retailerName":"Sainsbury’s",
+    "retailerURL":"https://api.sainsburys.co.uk/v1/exports/latest/fuel_prices_data.json"}
+  ,
+  {
+    "retailerName":"SGN",
+    "retailerURL":"https://www.sgnretail.uk/files/data/SGN_daily_fuel_prices.json"
+  },
+  {
+    "retailerName":"Shell",
+    "retailerURL":"https://www.shell.co.uk/fuel-prices-data.html"
+  },
+  {
+    "retailerName":"Tesco",
+    "retailerURL":"https://www.tesco.com/fuel_prices/fuel_prices_data.json"
+  }
+]
