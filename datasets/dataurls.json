@@ -1,4 +1,5 @@
-"dataurls":[
+{
+  "dataurls":[
   {
     "retailerName":"Applegreen UK",
     "retailerURL":"https://applegreenstores.com/fuel-prices/data.json"
@@ -60,3 +61,4 @@
     "retailerURL":"https://www.tesco.com/fuel_prices/fuel_prices_data.json"
   }
 ]
+}
