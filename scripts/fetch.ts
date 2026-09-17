@@ -13,7 +13,7 @@ const fuelPath = "/docs/fueldata.csv";
     if (!response.ok) {
       throw new Error(`Fuel Dataset download failed: HTTP ${response.status}: ${response.statusText}`);
     }
-    const result = await response.json();
+    const result = await response.text();
       console.log(result);
     } catch (error) {
       console.error(error.message);
