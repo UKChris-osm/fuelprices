@@ -1,4 +1,4 @@
-name: 2 - Run TypeScript Check
+name: Run TypeScript Check
 
 on:
   push:
