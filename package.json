@@ -10,7 +10,7 @@
     "check:fetch": "bun run scripts/fetch.ts"
   },
   "contributors": [
-    "UKChris-osm"
+    "UKChris-osm",
     "haignet.co.uk"
   ],
   "devDependencies": {
