@@ -19,8 +19,8 @@ try {
     console.error(error.message);
   }
 }
-})();
 
 const fuelData = await response.arrayBuffer();
 await Bun.write(fuelPath, fuelData);
 console.log(`Compressed size: ${formatSize(fuelData.byteLength)}`);
+})();
