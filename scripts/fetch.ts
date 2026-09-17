@@ -11,18 +11,16 @@ try {
   const response = await fetch(fueldataset);
 
   if (!response.ok) {
-    throw new Error(`Fuel Dataset download failed: HTTP ${response.status}: ${response.statusText}`);
+    throw new Error(`⚠️ Fuel Dataset download failed: HTTP ${response.status}: ${response.statusText}`);
+    console.log("📦 Keeping the existing fueldata.csv");
+  }  else {
+    const fuelData = await response.arrayBuffer();
+    console.log(`⛽ Writing fuel data to ${fuelPath}`);
+    await Bun.write(fuelPath, fuelData);
+    console.log(`✅ Fuel data written: ${fuelData.byteLength} bytes`);
+    console.log(`Downloaded: ${fuelData.byteLength}`);
   }
-
-  const fuelData = await response.arrayBuffer();
-
-  console.log(`⛽ Writing fuel data to ${fuelPath}`);
-
-  await Bun.write(fuelPath, fuelData);
-
-  console.log(`✅ Fuel data written: ${fuelData.byteLength} bytes`);
-
-  console.log(`Downloaded: ${fuelData.byteLength}`);
 } catch (error) {
-  console.error(error instanceof Error ? error.message : error);
+  console.error("❌ Fuel Dataset download failed:", error);
+  console.log("📦 Keeping the existing fueldata.csv");
 }
