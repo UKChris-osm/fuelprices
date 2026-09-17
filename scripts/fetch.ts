@@ -18,7 +18,7 @@ try {
 
   await Bun.write(fuelPath, fuelData);
 
-  console.log(`Downloaded: ${formatSize(fuelData.byteLength)}`);
+  console.log(`Downloaded: ${fuelData.byteLength}`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
 }
