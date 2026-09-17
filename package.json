@@ -1,0 +1,23 @@
+{
+  "name": "Fuel Finder Tool",
+  "version": "0.5.0",
+  "description": "Fuel price information across the UK.",
+  "private": false,
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "scripts": {
+    "check:types": "tsc --noEmit",
+    "check:fetch": "bun run scripts/fetch.ts"
+  },
+  "contributors": [
+    "UKChris-osm"
+    "haignet.co.uk"
+  ],
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "bun": "1.4.2"
+  }
+}
