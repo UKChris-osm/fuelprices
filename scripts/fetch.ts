@@ -22,5 +22,5 @@ const fuelPath = "/docs/fueldata.csv";
 
   const fuelData = await response.arrayBuffer();
   await Bun.write(fuelPath, fuelData);
-  console.log(`Compressed size: ${formatSize(fuelData.byteLength)}`);
+  console.log(`Compressed size: ${fuelData.byteLength}`);
 })();
