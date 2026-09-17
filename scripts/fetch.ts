@@ -8,19 +8,19 @@ const fueldataset = "https://ff-raw-data-bronze-ics-prod.s3.eu-west-2.amazonaws.
 const fuelPath = "/docs/fueldata.csv";
 
 (() => {
-try {
-  const response = await fetch(fueldataset);
-  if (!response.ok) {
-    throw new Error(`Fuel Dataset download failed: HTTP ${response.status}: ${response.statusText}`);
+  try {
+    const response = await fetch(fueldataset);
+    if (!response.ok) {
+      throw new Error(`Fuel Dataset download failed: HTTP ${response.status}: ${response.statusText}`);
+    }
+    const result = await response.json();
+      console.log(result);
+    } catch (error) {
+      console.error(error.message);
+    }
   }
-  const result = await response.json();
-    console.log(result);
-  } catch (error) {
-    console.error(error.message);
-  }
-}
 
-const fuelData = await response.arrayBuffer();
-await Bun.write(fuelPath, fuelData);
-console.log(`Compressed size: ${formatSize(fuelData.byteLength)}`);
+  const fuelData = await response.arrayBuffer();
+  await Bun.write(fuelPath, fuelData);
+  console.log(`Compressed size: ${formatSize(fuelData.byteLength)}`);
 })();
