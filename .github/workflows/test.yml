@@ -1,0 +1,18 @@
+name: Test Fuel Finder API
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test Fuel Finder authentication
+        env:
+          FUEL_API_ID: ${{ secrets.FUEL_API_ID }}
+          FUEL_API_CODE: ${{ secrets.FUEL_API_CODE }}
+        run: |
+          echo "Requesting Fuel Finder OAuth token..."
+
+          curl -i -sS -X POST \ 'https://api.fuelfinder.service.gov.uk/v1/' \ -H 'Content-Type: application/x-www-form-urlencoded' \ --data-urlencode "grant_type=client_credentials" \ --data-urlencode "client_id=${FUEL_API_ID}" \ --data-urlencode "client_secret=${FUEL_API_CODE}" \ --data-urlencode "scope=fuelfinder.read"
