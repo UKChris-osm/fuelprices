@@ -1,0 +1,21 @@
+name: Test Fuel Finder Access
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test Fuel Finder API
+        env:
+          FUEL_ACCESS_TOKEN: ${{ secrets.FUEL_ACCESS_TOKEN }}
+        run: |
+          echo "Testing Fuel Finder API..."
+
+          curl -i \
+            -H "Accept: application/json" \
+            -H "Authorization: Bearer ${FUEL_ACCESS_TOKEN}" \
+            -H "User-Agent: Mozilla/5.0" \
+            "https://www.fuel-finder.service.gov.uk/api/v1/pfs"
