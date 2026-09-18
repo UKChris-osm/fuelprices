@@ -17,8 +17,10 @@ jobs:
 
         curl -i -sS -X POST \
           "https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token" \
-          -H "Content-Type: application/x-www-form-urlencoded" \
-          -H "Accept: application/json" \
-          -H "Origin: https://www.fuel-finder.service.gov.uk" \
+          -H "Content-Type: application/json" \
+          -H "Accept: application/json, text/html, */*" \
+          -H "Accept-Language: en-GB,en;q=0.9" \
+          -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" \
           -H "Referer: https://www.fuel-finder.service.gov.uk/" \
-          --data "grant_type=client_credentials&client_id=${FUEL_API_ID}&client_secret=${FUEL_API_CODE}&scope=fuelfinder.read"
+          -H "Origin: https://www.fuel-finder.service.gov.uk" \
+          --data "{\"client_id\":\"${FUEL_API_ID}\",\"client_secret\":\"${FUEL_API_CODE}\"}"
