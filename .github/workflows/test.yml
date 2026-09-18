@@ -8,14 +8,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Fuel Finder authentication
-        env:
-          FUEL_API_ID: ${{ secrets.FUEL_API_ID }}
-          FUEL_API_CODE: ${{ secrets.FUEL_API_CODE }}
-        run: |
-          echo "Requesting Fuel Finder OAuth token..."
+    - name: Test Fuel Finder authentication
+      env:
+        FUEL_API_ID: ${{ secrets.FUEL_API_ID }}
+        FUEL_API_CODE: ${{ secrets.FUEL_API_CODE }}
+      run: |
+        echo "Requesting Fuel Finder OAuth token..."
 
-          curl -i -sS -X POST \
-            "https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            --data "grant_type=client_credentials&client_id=${FUEL_API_ID}&client_secret=${FUEL_API_CODE}&scope=fuelfinder.read"
+        curl -i -sS -X POST \
+          "https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -H "Accept: application/json" \
+          -H "Origin: https://www.fuel-finder.service.gov.uk" \
+          --data "grant_type=client_credentials&client_id=${FUEL_API_ID}&client_secret=${FUEL_API_CODE}&scope=fuelfinder.read"
