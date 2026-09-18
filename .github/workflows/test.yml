@@ -20,4 +20,5 @@ jobs:
           -H "Content-Type: application/x-www-form-urlencoded" \
           -H "Accept: application/json" \
           -H "Origin: https://www.fuel-finder.service.gov.uk" \
+          -H "Referer: https://www.fuel-finder.service.gov.uk/" \
           --data "grant_type=client_credentials&client_id=${FUEL_API_ID}&client_secret=${FUEL_API_CODE}&scope=fuelfinder.read"
