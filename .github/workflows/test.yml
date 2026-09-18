@@ -15,4 +15,4 @@ jobs:
         run: |
           echo "Requesting Fuel Finder OAuth token..."
 
-          curl -i -sS -X POST \ 'https://api.fuelfinder.service.gov.uk/v1/' \ -H 'Content-Type: application/x-www-form-urlencoded' \ --data-urlencode "grant_type=client_credentials" \ --data-urlencode "client_id=${FUEL_API_ID}" \ --data-urlencode "client_secret=${FUEL_API_CODE}" \ --data-urlencode "scope=fuelfinder.read"
+          curl -i -sS -X POST "https://api.fuelfinder.service.gov.uk/v1/" -H "Content-Type: application/x-www-form-urlencoded" --data "grant_type=client_credentials&client_id=${FUEL_API_ID}&client_secret=${FUEL_API_CODE}&scope=fuelfinder.read"
