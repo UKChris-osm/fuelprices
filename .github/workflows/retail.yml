@@ -1,3 +1,16 @@
+name: Test Retailer Fuel Feeds
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-feeds:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
       - name: Test retailer feeds
         shell: bash
         run: |
