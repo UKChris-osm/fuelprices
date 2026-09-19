@@ -1,16 +1,3 @@
-name: Test Retailer Fuel Feeds
-
-on:
-  workflow_dispatch:
-
-jobs:
-  test-feeds:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
       - name: Test retailer feeds
         shell: bash
         run: |
@@ -26,8 +13,11 @@ jobs:
             echo "$url"
 
             tmp=$(mktemp)
+            error=$(mktemp)
+
             start=$(date +%s%3N)
 
+            set +e
             http_code=$(curl \
               --silent \
               --show-error \
@@ -35,29 +25,36 @@ jobs:
               --output "$tmp" \
               --write-out "%{http_code}" \
               --max-time 30 \
-              "$url" 2>/tmp/curl-error)
+              "$url" 2>"$error")
+            curl_exit=$?
+            set -e
 
             end=$(date +%s%3N)
             elapsed=$((end - start))
 
             size=$(wc -c < "$tmp")
 
-            if jq empty "$tmp" 2>/dev/null; then
-              json="YES"
+            if [ "$curl_exit" -eq 0 ]; then
+              if jq empty "$tmp" 2>/dev/null; then
+                json="YES"
+              else
+                json="NO"
+              fi
             else
-              json="NO"
+              json="N/A"
             fi
 
-            echo "HTTP:     $http_code"
+            echo "HTTP:     ${http_code:-N/A}"
+            echo "curl:     $curl_exit"
             echo "Size:     $size bytes"
             echo "Time:     ${elapsed} ms"
             echo "JSON:     $json"
 
-            if [ -s /tmp/curl-error ]; then
-              echo "curl error:"
-              cat /tmp/curl-error
+            if [ -s "$error" ]; then
+              echo "Error:"
+              cat "$error"
             fi
 
-            rm -f "$tmp" /tmp/curl-error
+            rm -f "$tmp" "$error"
 
           done
