@@ -8,14 +8,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Freeola fuel.php
+      - name: Test Freeola fuel.php with FREEOLA token
+        env:
+          FREEOLA_TOKEN: ${{ secrets.FREEOLA }}
         run: |
           set +e
 
           URL="https://haignet.co.uk/fuel.php"
           OUTPUT=$(mktemp)
 
-          echo "Testing: $URL"
+          echo "Testing POST: $URL"
           echo
 
           START=$(date +%s%3N)
@@ -27,6 +29,8 @@ jobs:
             --max-time 30 \
             --output "$OUTPUT" \
             --write-out "%{http_code}" \
+            --header "Content-Type: application/json" \
+            --data "{\"token\":\"${FREEOLA_TOKEN}\"}" \
             "$URL")
 
           CURL_EXIT=$?
@@ -41,8 +45,8 @@ jobs:
           echo "response    : ${SIZE} bytes"
           echo "time        : ${ELAPSED} ms"
           echo
-          echo "Response preview:"
-          head -c 500 "$OUTPUT"
+          echo "Response:"
+          cat "$OUTPUT"
           echo
 
           rm -f "$OUTPUT"
