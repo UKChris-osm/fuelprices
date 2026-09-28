@@ -1,3 +1,5 @@
+// First, manually download the latest "fueldata.csv" from the official web site, and place it within the /datasets/ folder of this repo.
+
 export {}
 
 console.log("Get fuel dataset!");
