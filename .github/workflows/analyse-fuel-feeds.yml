@@ -914,101 +914,26 @@ jobs:
             "\nReading provider URL list...",
           );
 
-          const urlData =
-            JSON.parse(
-              await readFile(
-                URLS_FILE,
-                "utf8",
-              ),
-            );
+          const urlData = JSON.parse(
+            await readFile(URLS_FILE, "utf8"),
+          );
 
-          const providers: Record<
-            string,
-            string
-          > = {};
+          const providers: Record<string, string> = {};
 
-          if (Array.isArray(urlData)) {
-            for (
-              const item of urlData
+          for (const item of urlData.dataurls ?? []) {
+            if (
+              item &&
+              typeof item === "object" &&
+              typeof item.retailerName === "string" &&
+              typeof item.retailerURL === "string"
             ) {
-              if (
-                item &&
-                typeof item ===
-                  "object"
-              ) {
-                const object =
-                  item as JsonObject;
-
-                const name =
-                  getString(
-                    object,
-                    [
-                      "name",
-                      "provider",
-                      "brand",
-                    ],
-                  );
-
-                const url =
-                  getString(
-                    object,
-                    [
-                      "url",
-                      "data_url",
-                      "dataUrl",
-                    ],
-                  );
-
-                if (
-                  name &&
-                  url
-                ) {
-                  providers[name] =
-                    url;
-                }
-              }
-            }
-          } else if (
-            urlData &&
-            typeof urlData ===
-              "object"
-          ) {
-            for (
-              const [
-                name,
-                value,
-              ] of Object.entries(
-                urlData as JsonObject,
-              )
-            ) {
-              if (
-                typeof value ===
-                "string"
-              ) {
-                providers[name] =
-                  value;
-              } else if (
-                value &&
-                typeof value ===
-                  "object"
-              ) {
-                const url =
-                  getString(
-                    value as JsonObject,
-                    [
-                      "url",
-                      "data_url",
-                      "dataUrl",
-                    ],
-                  );
-
-                if (url) {
-                  providers[name] =
-                    url;
-                }
-              }
+              providers[item.retailerName] = item.retailerURL;
             }
           }
+
+          console.log(
+            `Providers discovered: ${Object.keys(providers).length}`,
+          );
 
           console.log(
             `Providers discovered: ${Object.keys(providers).length}`,
