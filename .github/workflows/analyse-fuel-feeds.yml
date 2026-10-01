@@ -9,6 +9,7 @@ permissions:
 jobs:
   analyse:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -16,263 +17,1428 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Analyse provider feeds
+      - name: Analyse fuel feeds
         shell: bash
         run: |
           mkdir -p analysis-output
-          cat > /tmp/analyse.ts <<'EOF'
+
+          cat > /tmp/analyse-fuel-feeds.ts <<'EOF'
           import { readFile, writeFile } from "node:fs/promises";
 
           const FUEL_FILE = "datasets/fueldata.csv";
           const URLS_FILE = "datasets/dataurls.json";
-          const OUT = "analysis-output";
-          const TIMEOUT = 10_000;
+          const OUTPUT_DIR = "analysis-output";
 
-          type FF = {
-            nodeId: string; name: string; brand: string; postcode: string;
-            latitude: string; longitude: string; prices: Record<string, number>;
-          };
-          type PR = {
-            provider: string; providerId: string; name: string; brand: string;
-            postcode: string; latitude?: number; longitude?: number;
-            prices: Record<string, number>; raw: unknown;
+          // A broken provider should never hold the complete analysis open for minutes.
+          const FETCH_TIMEOUT_MS = 10_000;
+
+          type FuelFinderRow = {
+            nodeId: string;
+            name: string;
+            brand: string;
+            postcode: string;
+            latitude: string;
+            longitude: string;
+            prices: Record<string, number>;
           };
 
-          function csvLine(s: string): string[] {
-            const a: string[] = []; let x = ""; let q = false;
-            for (let i = 0; i < s.length; i++) {
-              const c = s[i];
-              if (c === '"') {
-                if (q && s[i + 1] === '"') { x += '"'; i++; }
-                else q = !q;
-              } else if (c === "," && !q) { a.push(x); x = ""; }
-              else x += c;
+          type PriceRecord = {
+            fuelType: string;
+            price: number;
+            raw: unknown;
+          };
+
+          type ProviderRecord = {
+            provider: string;
+            providerId: string;
+            name: string;
+            brand: string;
+            postcode: string;
+            latitude?: number;
+            longitude?: number;
+            prices: Record<string, number>;
+            priceRecords: PriceRecord[];
+            raw: unknown;
+          };
+
+          type ProviderResult = {
+            provider: string;
+            url: string;
+            http_status: number | null;
+            fetch_ok: boolean;
+            response_bytes: number;
+            json_valid: boolean;
+            record_array_path: string;
+            record_count: number;
+            flattened_price_records: number;
+            fetch_time_ms: number;
+            error: string;
+            records: ProviderRecord[];
+            raw_preview: string;
+          };
+
+          type ComparisonRow = {
+            provider: string;
+            provider_id: string;
+            fuel_finder_node_id: string;
+            fuel_type: string;
+            fuel_finder_price: number;
+            provider_price: number;
+            difference: number;
+            fuel_finder_name: string;
+            provider_name: string;
+            postcode: string;
+            match_method: string;
+          };
+
+          const fuelTypes = ["E5", "E10", "B7S", "B7P", "B10", "HVO"];
+
+          function csvParseLine(line: string): string[] {
+            const result: string[] = [];
+            let current = "";
+            let quoted = false;
+
+            for (let i = 0; i < line.length; i++) {
+              const ch = line[i];
+
+              if (ch === '"') {
+                if (quoted && line[i + 1] === '"') {
+                  current += '"';
+                  i++;
+                } else {
+                  quoted = !quoted;
+                }
+              } else if (ch === "," && !quoted) {
+                result.push(current);
+                current = "";
+              } else {
+                current += ch;
+              }
             }
-            a.push(x); return a;
+
+            result.push(current);
+            return result;
           }
 
-          const norm = (v: unknown) => String(v ?? "").trim().toLowerCase().replace(/\s+/g, " ");
-          const pc = (v: unknown) => String(v ?? "").toUpperCase().replace(/\s+/g, "").trim();
+          function csvEscape(value: unknown): string {
+            return `"${String(value ?? "").replaceAll('"', '""')}"`;
+          }
 
-          function num(v: unknown): number | null {
-            if (typeof v === "number" && Number.isFinite(v)) return v;
-            if (typeof v !== "string" || !v.trim()) return null;
-            const n = Number(v.replace(/[£,\s]/g, ""));
+          function normalise(value: unknown): string {
+            return String(value ?? "")
+              .trim()
+              .toLowerCase()
+              .replace(/\s+/g, " ");
+          }
+
+          function normalisePostcode(value: unknown): string {
+            return String(value ?? "")
+              .toUpperCase()
+              .replace(/[^A-Z0-9]/g, "");
+          }
+
+          function numberValue(value: unknown): number | null {
+            if (typeof value === "number" && Number.isFinite(value)) {
+              return value;
+            }
+
+            if (typeof value !== "string") {
+              return null;
+            }
+
+            const cleaned = value
+              .replace(/[£,\s]/g, "")
+              .replace(/pence/gi, "")
+              .trim();
+
+            if (!cleaned) return null;
+
+            const n = Number(cleaned);
             return Number.isFinite(n) ? n : null;
           }
 
-          function price(v: unknown): number | null {
-            const n = num(v);
-            if (n === null) return null;
-            return n > 0 && n < 10 ? Math.round(n * 1000) / 10 : n;
+          function normalisePrice(value: unknown): number | null {
+            const n = numberValue(value);
+            if (n === null || n <= 0) return null;
+
+            // Most UK provider feeds use pence/litre.
+            // Some use pounds/litre, e.g. 1.529.
+            if (n > 0 && n < 10) {
+              return Math.round(n * 1000) / 10;
+            }
+
+            if (n >= 50 && n <= 500) {
+              return n;
+            }
+
+            return null;
           }
 
-          function get(o: any, path: string[]): unknown {
-            let v = o;
-            for (const k of path) {
-              if (v == null || typeof v !== "object") return undefined;
-              v = v[k];
+          function getPath(object: any, path: string[]): unknown {
+            let value = object;
+
+            for (const part of path) {
+              if (value === null || value === undefined) {
+                return undefined;
+              }
+
+              if (typeof value !== "object") {
+                return undefined;
+              }
+
+              value = value[part];
             }
-            return v;
+
+            return value;
           }
 
-          function first(o: any, paths: string[][]): unknown {
-            for (const p of paths) {
-              const v = get(o, p);
-              if (v !== undefined && v !== null && v !== "") return v;
+          function firstValue(
+            object: any,
+            paths: string[][],
+          ): unknown {
+            for (const path of paths) {
+              const value = getPath(object, path);
+
+              if (
+                value !== undefined &&
+                value !== null &&
+                value !== ""
+              ) {
+                return value;
+              }
             }
+
             return undefined;
           }
 
-          function stations(json: any): any[] {
-            if (Array.isArray(json)) return json;
-            if (!json || typeof json !== "object") return [];
-            for (const k of ["stations","forecourts","sites","locations","data","results"]) {
-              if (Array.isArray(json[k])) return json[k];
-            }
-            return [];
+          function isObject(value: unknown): value is Record<string, unknown> {
+            return (
+              value !== null &&
+              typeof value === "object" &&
+              !Array.isArray(value)
+            );
           }
 
-          function extractPrices(s: any): Record<string, number> {
-            const out: Record<string, number> = {};
-            const maps: Record<string, string[][]> = {
-              E5: [["e5"],["prices","e5"],["fuelPrices","e5"],["fuel_prices","e5"],["price","e5"]],
-              E10: [["e10"],["prices","e10"],["fuelPrices","e10"],["fuel_prices","e10"],["price","e10"]],
-              B7S: [["b7s"],["b7"],["diesel"],["prices","b7s"],["prices","b7"],["prices","diesel"],["fuelPrices","diesel"],["fuel_prices","diesel"],["price","diesel"]],
-              B7P: [["b7p"],["prices","b7p"],["fuelPrices","b7p"],["fuel_prices","b7p"],["price","b7p"]],
-              B10: [["b10"],["prices","b10"],["fuelPrices","b10"],["fuel_prices","b10"],["price","b10"]],
-              HVO: [["hvo"],["prices","hvo"],["fuelPrices","hvo"],["fuel_prices","hvo"],["price","hvo"]],
-            };
-            for (const [fuel, paths] of Object.entries(maps)) {
-              for (const p of paths) {
-                const n = price(get(s, p));
-                if (n !== null && n > 50 && n < 500) { out[fuel] = n; break; }
+          function looksLikeStation(value: any): boolean {
+            if (!isObject(value)) return false;
+
+            const keys = Object.keys(value).map(normalise);
+
+            return (
+              keys.some((x) =>
+                [
+                  "postcode",
+                  "postalcode",
+                  "post_code",
+                  "sitename",
+                  "stationname",
+                  "tradingname",
+                ].includes(x),
+              ) ||
+              keys.some((x) =>
+                [
+                  "stationid",
+                  "siteid",
+                  "nodeid",
+                  "locationid",
+                ].includes(x),
+              )
+            );
+          }
+
+          function findRecordArray(
+            json: any,
+          ): { path: string; records: any[] } {
+            if (Array.isArray(json)) {
+              return { path: "$", records: json };
+            }
+
+            if (!isObject(json)) {
+              return { path: "", records: [] };
+            }
+
+            // The current feeds seen in the previous run all exposed $.stations,
+            // but retain the other common shapes for diagnostics and future feeds.
+            const preferred = [
+              "stations",
+              "forecourts",
+              "sites",
+              "locations",
+              "results",
+              "data",
+            ];
+
+            for (const key of preferred) {
+              if (Array.isArray(json[key])) {
+                return {
+                  path: `$.${key}`,
+                  records: json[key],
+                };
               }
             }
 
-            function walk(v: any, depth = 0) {
-              if (depth > 5 || v == null || typeof v !== "object") return;
-              if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
-              const fuel = norm(first(v,[["fuelType"],["fuel_type"],["type"],["fuel"],["product"],["name"],["grade"]]));
-              const n = price(first(v,[["price"],["value"],["amount"],["currentPrice"],["current_price"]]));
-              if (n !== null && n > 50 && n < 500) {
-                if (fuel.includes("e10") || fuel.includes("unleaded 95") || fuel === "unleaded") out.E10 ??= n;
-                else if (fuel.includes("e5") || fuel.includes("super unleaded")) out.E5 ??= n;
-                else if (fuel.includes("diesel") || fuel.includes("b7")) out.B7S ??= n;
-                else if (fuel.includes("b10")) out.B10 ??= n;
-                else if (fuel.includes("hvo")) out.HVO ??= n;
+            for (const [key, value] of Object.entries(json)) {
+              if (
+                Array.isArray(value) &&
+                value.some((item) => looksLikeStation(item))
+              ) {
+                return {
+                  path: `$.${key}`,
+                  records: value,
+                };
               }
-              for (const x of Object.values(v)) walk(x, depth + 1);
             }
-            walk(s);
-            return out;
+
+            return { path: "", records: [] };
           }
 
-          function parseProviders(provider: string, json: any): PR[] {
-            return stations(json).filter(x => x && typeof x === "object").map(s => ({
-              provider,
-              providerId: String(first(s,[["node_id"],["nodeId"],["id"],["siteId"],["site_id"],["stationId"],["station_id"],["locationId"],["location_id"]]) ?? "").trim(),
-              name: String(first(s,[["trading_name"],["tradingName"],["name"],["siteName"],["site_name"],["stationName"],["station_name"],["brandName"],["brand_name"]]) ?? "").trim(),
-              brand: String(first(s,[["brand"],["brand_name"],["brandName"],["retailer"],["retailerName"]]) ?? "").trim(),
-              postcode: pc(first(s,[["postcode"],["postCode"],["postalCode"],["postal_code"],["address","postcode"],["location","postcode"],["location","postalCode"],["location","postal_code"]])),
-              latitude: num(first(s,[["latitude"],["lat"],["location","latitude"],["location","lat"]] )) ?? undefined,
-              longitude: num(first(s,[["longitude"],["lng"],["lon"],["location","longitude"],["location","lng"],["location","lon"]])) ?? undefined,
-              prices: extractPrices(s),
-              raw: s
-            }));
+          function fuelTypeFromText(value: unknown): string | null {
+            const s = normalise(value);
+
+            if (!s) return null;
+
+            // Order matters: B10 before B7, E10 before generic unleaded.
+            if (
+              s === "b10" ||
+              s.includes("b10") ||
+              s.includes("hvo10")
+            ) {
+              return "B10";
+            }
+
+            if (s.includes("hvo")) {
+              return "HVO";
+            }
+
+            if (
+              s === "b7p" ||
+              s.includes("b7 premium") ||
+              s.includes("premium diesel")
+            ) {
+              return "B7P";
+            }
+
+            if (
+              s === "b7s" ||
+              s === "b7" ||
+              s.includes("diesel") ||
+              s.includes("dieselextra")
+            ) {
+              return "B7S";
+            }
+
+            if (
+              s === "e10" ||
+              s.includes("e10") ||
+              s.includes("unleaded 95") ||
+              s === "unleaded"
+            ) {
+              return "E10";
+            }
+
+            if (
+              s === "e5" ||
+              s.includes("e5") ||
+              s.includes("super unleaded") ||
+              s.includes("premium unleaded") ||
+              s.includes("unleaded 97") ||
+              s.includes("unleaded 98")
+            ) {
+              return "E5";
+            }
+
+            return null;
           }
 
-          function parseFF(csv: string): FF[] {
-            const lines = csv.split(/\r?\n/).filter(Boolean);
-            if (lines.length < 2) return [];
-            const h = csvLine(lines[0]);
-            const ix = new Map(h.map((x,i) => [x,i]));
-            const f = (r: string[], k: string) => r[ix.get(k) ?? -1] ?? "";
-            const out: FF[] = [];
-            for (const line of lines.slice(1)) {
-              const r = csvLine(line), id = f(r,"forecourts.node_id").trim();
-              if (!id) continue;
-              const prices: Record<string,number> = {};
-              for (const fuel of ["E5","E10","B7S","B7P","B10","HVO"]) {
-                const n = num(f(r,`forecourts.fuel_price.${fuel}`));
-                if (n !== null && n > 0) prices[fuel] = n;
-              }
-              out.push({
-                nodeId:id, name:f(r,"forecourts.trading_name").trim(),
-                brand:f(r,"forecourts.brand_name").trim(),
-                postcode:pc(f(r,"forecourts.location.postcode")),
-                latitude:f(r,"forecourts.location.latitude").trim(),
-                longitude:f(r,"forecourts.location.longitude").trim(), prices
+          function priceFromObject(object: any): number | null {
+            return normalisePrice(
+              firstValue(object, [
+                ["price"],
+                ["currentPrice"],
+                ["current_price"],
+                ["value"],
+                ["amount"],
+                ["pencePerLitre"],
+                ["pence_per_litre"],
+                ["pricePerLitre"],
+                ["price_per_litre"],
+              ]),
+            );
+          }
+
+          function extractPriceRecords(station: any): PriceRecord[] {
+            const result: PriceRecord[] = [];
+            const seen = new Set<string>();
+
+            function add(
+              fuelType: string | null,
+              value: unknown,
+              raw: unknown,
+            ) {
+              if (!fuelType) return;
+
+              const price = normalisePrice(value);
+              if (price === null) return;
+
+              const key = `${fuelType}:${price}`;
+
+              if (seen.has(key)) return;
+
+              seen.add(key);
+              result.push({
+                fuelType,
+                price,
+                raw,
               });
             }
-            return out;
-          }
 
-          function similarity(a:string,b:string):number {
-            if (!a || !b) return 0;
-            if (a === b) return 1;
-            if (a.includes(b) || b.includes(a)) return .85;
-            const A=new Set(a.split(/[^a-z0-9]+/).filter(Boolean));
-            const B=new Set(b.split(/[^a-z0-9]+/).filter(Boolean));
-            let n=0; for(const x of A) if(B.has(x)) n++;
-            return n/Math.max(A.size,B.size);
-          }
+            function walk(value: any, depth: number) {
+              if (depth > 7 || value === null || value === undefined) {
+                return;
+              }
 
-          const ff = parseFF(await readFile(FUEL_FILE,"utf8"));
-          console.log(`Fuel Finder rows: ${ff.length}`);
-          const byNode=new Map<string,FF[]>(), byPC=new Map<string,FF[]>();
-          for(const r of ff) {
-            if(!byNode.has(r.nodeId)) byNode.set(r.nodeId,[]);
-            byNode.get(r.nodeId)!.push(r);
-            if(r.postcode) { if(!byPC.has(r.postcode)) byPC.set(r.postcode,[]); byPC.get(r.postcode)!.push(r); }
-          }
-          console.log(`Fuel Finder node IDs: ${byNode.size}`);
-          console.log(`Fuel Finder postcodes: ${byPC.size}`);
-
-          const data=JSON.parse(await readFile(URLS_FILE,"utf8"));
-          const providers:Record<string,string>={};
-          for(const item of data.dataurls ?? []) {
-            if(item && typeof item==="object" && typeof item.retailerName==="string" && typeof item.retailerURL==="string")
-              providers[item.retailerName]=item.retailerURL;
-          }
-          console.log(`Providers discovered: ${Object.keys(providers).length}`);
-
-          async function fetchOne(provider:string,url:string) {
-            const start=Date.now();
-            try {
-              const res=await fetch(url,{
-                headers:{ "User-Agent":"Mozilla/5.0 (compatible; FuelFinderFeedAnalysis/1.0)", Accept:"application/json,text/plain,*/*" },
-                signal:AbortSignal.timeout(TIMEOUT)
-              });
-              const text=await res.text();
-              if(!res.ok) return {provider,url,status:res.status,ms:Date.now()-start,records:[],error:`HTTP ${res.status}`};
-              let json:any;
-              try { json=JSON.parse(text); } catch { return {provider,url,status:res.status,ms:Date.now()-start,records:[],error:"Response was not valid JSON"}; }
-              return {provider,url,status:res.status,ms:Date.now()-start,records:parseProviders(provider,json),error:""};
-            } catch(e) {
-              return {provider,url,status:null,ms:Date.now()-start,records:[],error:e instanceof Error?e.message:String(e)};
-            }
-          }
-
-          const results=await Promise.all(Object.entries(providers).map(([p,u])=>fetchOne(p,u)));
-          const rows:any[]=[];
-          const summary:any[]=[];
-
-          for(const r of results) {
-            let nodeMatches=0, postcodeMatches=0, matched=0, comparisons=0;
-            for(const p of r.records) {
-              const node=byNode.get(p.providerId);
-              if(node?.length===1) nodeMatches++;
-              const pcs=byPC.get(p.postcode) ?? [];
-              if(p.postcode && pcs.length) postcodeMatches++;
-
-              let ffrow:FF|undefined;
-              if(node?.length===1) ffrow=node[0];
-              else if(pcs.length===1) ffrow=pcs[0];
-              else if(pcs.length>1) {
-                let best=0;
-                for(const x of pcs) {
-                  const s=similarity(norm(p.name),norm(x.name));
-                  if(s>best) { best=s; ffrow=x; }
+              if (Array.isArray(value)) {
+                for (const item of value) {
+                  walk(item, depth + 1);
                 }
-                if(best<.45) ffrow=undefined;
+                return;
               }
 
-              if(!ffrow) continue;
-              matched++;
-              for(const fuel of Object.keys(p.prices)) {
-                if(ffrow.prices[fuel] === undefined) continue;
-                comparisons++;
-                rows.push({
-                  provider:r.provider, provider_id:p.providerId,
-                  fuel_finder_node_id:ffrow.nodeId, fuel_type:fuel,
-                  fuel_finder_price:ffrow.prices[fuel], provider_price:p.prices[fuel],
-                  difference:Math.round((p.prices[fuel]-ffrow.prices[fuel])*10)/10,
-                  fuel_finder_name:ffrow.name, provider_name:p.name, postcode:ffrow.postcode
+              if (!isObject(value)) {
+                return;
+              }
+
+              // Case 1: an object explicitly identifies its fuel type and price.
+              const fuelType = fuelTypeFromText(
+                firstValue(value, [
+                  ["fuelType"],
+                  ["fuel_type"],
+                  ["fueltype"],
+                  ["product"],
+                  ["productName"],
+                  ["product_name"],
+                  ["grade"],
+                  ["fuel"],
+                  ["name"],
+                  ["type"],
+                ]),
+              );
+
+              const directPrice = priceFromObject(value);
+
+              if (fuelType && directPrice !== null) {
+                add(fuelType, directPrice, value);
+              }
+
+              // Case 2: a key itself identifies a fuel type.
+              for (const [key, child] of Object.entries(value)) {
+                const keyFuel = fuelTypeFromText(key);
+
+                if (keyFuel) {
+                  const childPrice =
+                    normalisePrice(child) ??
+                    (isObject(child) ? priceFromObject(child) : null);
+
+                  if (childPrice !== null) {
+                    add(keyFuel, childPrice, child);
+                  }
+                }
+              }
+
+              for (const child of Object.values(value)) {
+                if (child && typeof child === "object") {
+                  walk(child, depth + 1);
+                }
+              }
+            }
+
+            walk(station, 0);
+            return result;
+          }
+
+          function extractStationPrices(
+            station: any,
+          ): Record<string, number> {
+            const prices: Record<string, number> = {};
+
+            for (const item of extractPriceRecords(station)) {
+              prices[item.fuelType] ??= item.price;
+            }
+
+            // Also explicitly test the direct field names used by some feeds.
+            const direct: Record<string, string[][]> = {
+              E5: [
+                ["e5"],
+                ["E5"],
+                ["prices", "e5"],
+                ["prices", "E5"],
+                ["fuelPrices", "e5"],
+                ["fuel_prices", "e5"],
+              ],
+              E10: [
+                ["e10"],
+                ["E10"],
+                ["prices", "e10"],
+                ["prices", "E10"],
+                ["fuelPrices", "e10"],
+                ["fuel_prices", "e10"],
+              ],
+              B7S: [
+                ["b7"],
+                ["B7"],
+                ["b7s"],
+                ["B7S"],
+                ["diesel"],
+                ["Diesel"],
+                ["prices", "b7"],
+                ["prices", "diesel"],
+                ["fuelPrices", "diesel"],
+                ["fuel_prices", "diesel"],
+              ],
+              B7P: [
+                ["b7p"],
+                ["B7P"],
+                ["prices", "b7p"],
+                ["fuelPrices", "b7p"],
+                ["fuel_prices", "b7p"],
+              ],
+              B10: [
+                ["b10"],
+                ["B10"],
+                ["prices", "b10"],
+                ["fuelPrices", "b10"],
+                ["fuel_prices", "b10"],
+              ],
+              HVO: [
+                ["hvo"],
+                ["HVO"],
+                ["prices", "hvo"],
+                ["fuelPrices", "hvo"],
+                ["fuel_prices", "hvo"],
+              ],
+            };
+
+            for (const fuel of fuelTypes) {
+              for (const path of direct[fuel] ?? []) {
+                const p = normalisePrice(getPath(station, path));
+
+                if (p !== null) {
+                  prices[fuel] ??= p;
+                  break;
+                }
+              }
+            }
+
+            return prices;
+          }
+
+          function extractProviderRecord(
+            provider: string,
+            station: any,
+          ): ProviderRecord {
+            const providerId = String(
+              firstValue(station, [
+                ["node_id"],
+                ["nodeId"],
+                ["nodeID"],
+                ["site_id"],
+                ["siteId"],
+                ["siteID"],
+                ["station_id"],
+                ["stationId"],
+                ["stationID"],
+                ["location_id"],
+                ["locationId"],
+                ["id"],
+                ["ID"],
+              ]) ?? "",
+            ).trim();
+
+            const name = String(
+              firstValue(station, [
+                ["trading_name"],
+                ["tradingName"],
+                ["station_name"],
+                ["stationName"],
+                ["site_name"],
+                ["siteName"],
+                ["name"],
+                ["location_name"],
+                ["locationName"],
+              ]) ?? "",
+            ).trim();
+
+            const brand = String(
+              firstValue(station, [
+                ["brand"],
+                ["brand_name"],
+                ["brandName"],
+                ["retailer"],
+                ["retailer_name"],
+                ["retailerName"],
+              ]) ?? "",
+            ).trim();
+
+            const postcode = normalisePostcode(
+              firstValue(station, [
+                ["postcode"],
+                ["postCode"],
+                ["postalCode"],
+                ["postal_code"],
+                ["address", "postcode"],
+                ["address", "postCode"],
+                ["location", "postcode"],
+                ["location", "postCode"],
+                ["location", "postalCode"],
+              ]),
+            );
+
+            const latitude = numberValue(
+              firstValue(station, [
+                ["latitude"],
+                ["lat"],
+                ["location", "latitude"],
+                ["location", "lat"],
+                ["coordinates", "latitude"],
+              ]),
+            );
+
+            const longitude = numberValue(
+              firstValue(station, [
+                ["longitude"],
+                ["lon"],
+                ["lng"],
+                ["location", "longitude"],
+                ["location", "lon"],
+                ["location", "lng"],
+                ["coordinates", "longitude"],
+              ]),
+            );
+
+            return {
+              provider,
+              providerId,
+              name,
+              brand,
+              postcode,
+              latitude: latitude ?? undefined,
+              longitude: longitude ?? undefined,
+              prices: extractStationPrices(station),
+              priceRecords: extractPriceRecords(station),
+              raw: station,
+            };
+          }
+
+          function parseFuelFinder(csv: string): {
+            rows: FuelFinderRow[];
+            headers: string[];
+          } {
+            const lines = csv.split(/\r?\n/).filter((x) => x.length > 0);
+
+            if (lines.length < 2) {
+              return { rows: [], headers: [] };
+            }
+
+            const headers = csvParseLine(lines[0]);
+            const index = new Map(
+              headers.map((header, i) => [header, i]),
+            );
+
+            const field = (
+              row: string[],
+              name: string,
+            ): string => row[index.get(name) ?? -1] ?? "";
+
+            const rows: FuelFinderRow[] = [];
+
+            for (const line of lines.slice(1)) {
+              const row = csvParseLine(line);
+
+              const nodeId = field(
+                row,
+                "forecourts.node_id",
+              ).trim();
+
+              if (!nodeId) continue;
+
+              const prices: Record<string, number> = {};
+
+              for (const fuel of fuelTypes) {
+                const value = numberValue(
+                  field(row, `forecourts.fuel_price.${fuel}`),
+                );
+
+                if (value !== null && value > 0) {
+                  prices[fuel] = value;
+                }
+              }
+
+              rows.push({
+                nodeId,
+                name: field(row, "forecourts.trading_name").trim(),
+                brand: field(row, "forecourts.brand_name").trim(),
+                postcode: normalisePostcode(
+                  field(row, "forecourts.location.postcode"),
+                ),
+                latitude: field(
+                  row,
+                  "forecourts.location.latitude",
+                ).trim(),
+                longitude: field(
+                  row,
+                  "forecourts.location.longitude",
+                ).trim(),
+                prices,
+              });
+            }
+
+            return { rows, headers };
+          }
+
+          function similarity(a: string, b: string): number {
+            const aa = normalise(a);
+            const bb = normalise(b);
+
+            if (!aa || !bb) return 0;
+            if (aa === bb) return 1;
+            if (aa.includes(bb) || bb.includes(aa)) return 0.85;
+
+            const A = new Set(
+              aa.split(/[^a-z0-9]+/).filter(Boolean),
+            );
+            const B = new Set(
+              bb.split(/[^a-z0-9]+/).filter(Boolean),
+            );
+
+            if (!A.size || !B.size) return 0;
+
+            let common = 0;
+
+            for (const token of A) {
+              if (B.has(token)) common++;
+            }
+
+            return common / Math.max(A.size, B.size);
+          }
+
+          function matchStation(
+            provider: ProviderRecord,
+            byNode: Map<string, FuelFinderRow[]>,
+            byPostcode: Map<string, FuelFinderRow[]>,
+          ): {
+            row: FuelFinderRow | null;
+            method: string;
+          } {
+            if (provider.providerId) {
+              const nodeRows = byNode.get(provider.providerId);
+
+              if (nodeRows?.length === 1) {
+                return {
+                  row: nodeRows[0],
+                  method: "node_id",
+                };
+              }
+            }
+
+            if (provider.postcode) {
+              const postcodeRows =
+                byPostcode.get(provider.postcode) ?? [];
+
+              if (postcodeRows.length === 1) {
+                return {
+                  row: postcodeRows[0],
+                  method: "postcode",
+                };
+              }
+
+              if (postcodeRows.length > 1) {
+                let best: FuelFinderRow | null = null;
+                let bestScore = 0;
+
+                for (const row of postcodeRows) {
+                  const score = similarity(
+                    provider.name,
+                    row.name,
+                  );
+
+                  if (score > bestScore) {
+                    bestScore = score;
+                    best = row;
+                  }
+                }
+
+                if (best && bestScore >= 0.45) {
+                  return {
+                    row: best,
+                    method: "postcode+name",
+                  };
+                }
+              }
+            }
+
+            return {
+              row: null,
+              method: "",
+            };
+          }
+
+          async function fetchProvider(
+            provider: string,
+            url: string,
+          ): Promise<ProviderResult> {
+            const started = Date.now();
+
+            try {
+              const response = await fetch(url, {
+                headers: {
+                  "User-Agent":
+                    "Mozilla/5.0 (compatible; FuelFinderFeedAnalysis/1.0)",
+                  Accept:
+                    "application/json,text/plain,*/*",
+                },
+                signal: AbortSignal.timeout(
+                  FETCH_TIMEOUT_MS,
+                ),
+              });
+
+              const text = await response.text();
+
+              if (!response.ok) {
+                return {
+                  provider,
+                  url,
+                  http_status: response.status,
+                  fetch_ok: false,
+                  response_bytes: text.length,
+                  json_valid: false,
+                  record_array_path: "",
+                  record_count: 0,
+                  flattened_price_records: 0,
+                  fetch_time_ms: Date.now() - started,
+                  error: `HTTP ${response.status}`,
+                  records: [],
+                  raw_preview: text.slice(0, 1000),
+                };
+              }
+
+              let json: any;
+
+              try {
+                json = JSON.parse(text);
+              } catch (error) {
+                return {
+                  provider,
+                  url,
+                  http_status: response.status,
+                  fetch_ok: true,
+                  response_bytes: text.length,
+                  json_valid: false,
+                  record_array_path: "",
+                  record_count: 0,
+                  flattened_price_records: 0,
+                  fetch_time_ms: Date.now() - started,
+                  error:
+                    error instanceof Error
+                      ? `JSON Parse error: ${error.message}`
+                      : "JSON parse failed",
+                  records: [],
+                  raw_preview: text.slice(0, 1000),
+                };
+              }
+
+              const array = findRecordArray(json);
+
+              const records = array.records.map(
+                (station) =>
+                  extractProviderRecord(
+                    provider,
+                    station,
+                  ),
+              );
+
+              const flattenedPriceRecords =
+                records.reduce(
+                  (total, record) =>
+                    total + record.priceRecords.length,
+                  0,
+                );
+
+              return {
+                provider,
+                url,
+                http_status: response.status,
+                fetch_ok: true,
+                response_bytes: text.length,
+                json_valid: true,
+                record_array_path: array.path,
+                record_count: records.length,
+                flattened_price_records:
+                  flattenedPriceRecords,
+                fetch_time_ms: Date.now() - started,
+                error: "",
+                records,
+                raw_preview: "",
+              };
+            } catch (error) {
+              return {
+                provider,
+                url,
+                http_status: null,
+                fetch_ok: false,
+                response_bytes: 0,
+                json_valid: false,
+                record_array_path: "",
+                record_count: 0,
+                flattened_price_records: 0,
+                fetch_time_ms: Date.now() - started,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : String(error),
+                records: [],
+                raw_preview: "",
+              };
+            }
+          }
+
+          console.log("========================================");
+          console.log("Fuel Feed Analysis");
+          console.log("========================================");
+          console.log("");
+
+          console.log("Reading Fuel Finder dataset...");
+
+          const fuelCsv = await readFile(
+            FUEL_FILE,
+            "utf8",
+          );
+
+          const {
+            rows: fuelFinder,
+            headers: fuelFinderHeaders,
+          } = parseFuelFinder(fuelCsv);
+
+          console.log(
+            `Fuel Finder rows: ${fuelFinder.length}`,
+          );
+
+          console.log(
+            `Fuel Finder columns: ${fuelFinderHeaders.length}`,
+          );
+
+          console.log("");
+          console.log("Detected Fuel Finder columns:");
+          console.log(
+            "  node: forecourts.node_id",
+          );
+          console.log(
+            "  postcode: forecourts.location.postcode",
+          );
+          console.log(
+            "  trading name: forecourts.trading_name",
+          );
+          console.log(
+            "  brand: forecourts.brand_name",
+          );
+
+          const byNode =
+            new Map<string, FuelFinderRow[]>();
+
+          const byPostcode =
+            new Map<string, FuelFinderRow[]>();
+
+          for (const row of fuelFinder) {
+            if (!byNode.has(row.nodeId)) {
+              byNode.set(row.nodeId, []);
+            }
+
+            byNode.get(row.nodeId)!.push(row);
+
+            if (row.postcode) {
+              if (!byPostcode.has(row.postcode)) {
+                byPostcode.set(row.postcode, []);
+              }
+
+              byPostcode.get(row.postcode)!.push(row);
+            }
+          }
+
+          console.log("");
+          console.log(
+            `Fuel Finder node IDs: ${byNode.size}`,
+          );
+
+          console.log(
+            `Fuel Finder postcodes: ${byPostcode.size}`,
+          );
+
+          console.log("");
+          console.log("Reading provider URL list...");
+
+          const urlData = JSON.parse(
+            await readFile(URLS_FILE, "utf8"),
+          );
+
+          const providers: Record<string, string> = {};
+
+          // datasets/dataurls.json uses:
+          // {
+          //   "dataurls": [
+          //     {
+          //       "retailerName": "...",
+          //       "retailerURL": "..."
+          //     }
+          //   ]
+          // }
+          for (const item of urlData.dataurls ?? []) {
+            if (
+              item &&
+              typeof item === "object" &&
+              typeof item.retailerName === "string" &&
+              typeof item.retailerURL === "string"
+            ) {
+              providers[item.retailerName] =
+                item.retailerURL;
+            }
+          }
+
+          console.log(
+            `Providers discovered: ${Object.keys(providers).length}`,
+          );
+
+          console.log("");
+          console.log(
+            `Fetching ${Object.keys(providers).length} providers in parallel...`,
+          );
+
+          // All feeds run concurrently. The 10-second timeout is per feed.
+          // Therefore one unavailable provider cannot make the entire analysis
+          // wait for 2+ minutes.
+          const providerResults =
+            await Promise.all(
+              Object.entries(providers).map(
+                ([provider, url]) =>
+                  fetchProvider(provider, url),
+              ),
+            );
+
+          const comparisonRows: ComparisonRow[] = [];
+          const detailedComparisons: any[] = [];
+
+          for (const result of providerResults) {
+            let matchedByNodeId = 0;
+            let matchedByPostcode = 0;
+            let unmatchedPriceRecords = 0;
+            let uniqueMatchedStations = 0;
+            let priceComparisons = 0;
+            let exactPriceMatches = 0;
+            let priceDifferences = 0;
+
+            const matchedNodeIds = new Set<string>();
+            const providerPriceSamples: any[] = [];
+
+            for (const record of result.records) {
+              if (
+                record.priceRecords.length > 0 &&
+                providerPriceSamples.length < 5
+              ) {
+                providerPriceSamples.push({
+                  id: record.providerId,
+                  name: record.name,
+                  postcode: record.postcode,
+                  prices: record.prices,
+                  price_records:
+                    record.priceRecords.map(
+                      (x) => ({
+                        fuel_type: x.fuelType,
+                        price: x.price,
+                      }),
+                    ),
+                });
+              }
+
+              const match = matchStation(
+                record,
+                byNode,
+                byPostcode,
+              );
+
+              if (!match.row) {
+                if (record.priceRecords.length > 0) {
+                  unmatchedPriceRecords +=
+                    record.priceRecords.length;
+                }
+
+                continue;
+              }
+
+              if (match.method === "node_id") {
+                matchedByNodeId++;
+              } else {
+                matchedByPostcode++;
+              }
+
+              matchedNodeIds.add(match.row.nodeId);
+
+              for (const fuel of fuelTypes) {
+                const providerPrice =
+                  record.prices[fuel];
+
+                const fuelFinderPrice =
+                  match.row.prices[fuel];
+
+                if (
+                  providerPrice === undefined ||
+                  fuelFinderPrice === undefined
+                ) {
+                  continue;
+                }
+
+                priceComparisons++;
+
+                const difference =
+                  Math.round(
+                    (providerPrice -
+                      fuelFinderPrice) *
+                      10,
+                  ) / 10;
+
+                if (difference === 0) {
+                  exactPriceMatches++;
+                } else {
+                  priceDifferences++;
+                }
+
+                comparisonRows.push({
+                  provider: result.provider,
+                  provider_id:
+                    record.providerId,
+                  fuel_finder_node_id:
+                    match.row.nodeId,
+                  fuel_type: fuel,
+                  fuel_finder_price:
+                    fuelFinderPrice,
+                  provider_price:
+                    providerPrice,
+                  difference,
+                  fuel_finder_name:
+                    match.row.name,
+                  provider_name:
+                    record.name,
+                  postcode:
+                    match.row.postcode,
+                  match_method:
+                    match.method,
                 });
               }
             }
-            summary.push({...r,records:r.records.length,nodeMatches,postcodeMatches,matched,priceComparisons:comparisons});
-            console.log(`${r.provider} | HTTP ${r.status ?? "ERR"} | ${r.ms} ms | ${r.records.length} records | ${matched} matched | ${comparisons} price comparisons${r.error ? ` | ERROR: ${r.error}` : ""}`);
+
+            uniqueMatchedStations =
+              matchedNodeIds.size;
+
+            const exactPercent =
+              priceComparisons === 0
+                ? 0
+                : Number(
+                    (
+                      (exactPriceMatches /
+                        priceComparisons) *
+                      100
+                    ).toFixed(2),
+                  );
+
+            const detail = {
+              provider: result.provider,
+              url: result.url,
+              http_status:
+                result.http_status,
+              fetch_ok:
+                result.fetch_ok,
+              response_bytes:
+                result.response_bytes,
+              fetch_time_ms:
+                result.fetch_time_ms,
+              json_valid:
+                result.json_valid,
+              record_array_path:
+                result.record_array_path ||
+                "NOT FOUND",
+              record_count:
+                result.record_count,
+              flattened_price_records:
+                result.flattened_price_records,
+              matched_by_node_id:
+                matchedByNodeId,
+              matched_by_postcode:
+                matchedByPostcode,
+              unmatched_price_records:
+                unmatchedPriceRecords,
+              unique_matched_stations:
+                uniqueMatchedStations,
+              price_comparisons:
+                priceComparisons,
+              exact_price_matches:
+                exactPriceMatches,
+              price_differences:
+                priceDifferences,
+              exact_price_match_percent:
+                exactPercent,
+              error:
+                result.error,
+              raw_preview:
+                result.raw_preview,
+              price_samples:
+                providerPriceSamples,
+            };
+
+            detailedComparisons.push(detail);
+
+            console.log("");
+            console.log(
+              "========================================",
+            );
+            console.log(
+              `Provider: ${result.provider}`,
+            );
+            console.log(
+              `URL: ${result.url}`,
+            );
+            console.log(
+              "========================================",
+            );
+            console.log(
+              `HTTP status: ${result.http_status ?? "N/A"}`,
+            );
+            console.log(
+              `Fetch OK: ${result.fetch_ok}`,
+            );
+            console.log(
+              `Response bytes: ${result.response_bytes}`,
+            );
+            console.log(
+              `JSON valid: ${result.json_valid}`,
+            );
+            console.log(
+              `Record array: ${
+                result.record_array_path ||
+                "NOT FOUND"
+              }`,
+            );
+            console.log(
+              `Records: ${result.record_count}`,
+            );
+            console.log(
+              `Price records: ${result.flattened_price_records}`,
+            );
+            console.log(
+              `Fetch time: ${result.fetch_time_ms} ms`,
+            );
+
+            if (result.error) {
+              console.log(
+                `JSON/error: ${result.error}`,
+              );
+            }
+
+            console.log(
+              `Matched by node ID: ${matchedByNodeId}`,
+            );
+            console.log(
+              `Matched by postcode: ${matchedByPostcode}`,
+            );
+            console.log(
+              `Unmatched price records: ${unmatchedPriceRecords}`,
+            );
+            console.log(
+              `Unique matched stations: ${uniqueMatchedStations}`,
+            );
+            console.log(
+              `Price comparisons: ${priceComparisons}`,
+            );
+            console.log(
+              `Exact price matches: ${exactPriceMatches}`,
+            );
+            console.log(
+              `Price differences: ${priceDifferences}`,
+            );
+            console.log(
+              `Exact price match rate: ${exactPercent}%`,
+            );
+
+            if (providerPriceSamples.length > 0) {
+              console.log(
+                "Price samples:",
+                JSON.stringify(
+                  providerPriceSamples,
+                ),
+              );
+            }
           }
 
-          const esc=(v:any)=>`"${String(v??"").replaceAll('"','""')}"`;
-          const header=["provider","provider_id","fuel_finder_node_id","fuel_type","fuel_finder_price","provider_price","difference","fuel_finder_name","provider_name","postcode"];
-          await writeFile(`${OUT}/fuel-feed-comparison.csv`,[header.join(","),...rows.map(x=>header.map(k=>esc(x[k])).join(","))].join("\n"));
-          await writeFile(`${OUT}/fuel-feed-comparison.json`,JSON.stringify(rows,null,2));
-          await writeFile(`${OUT}/fuel-feed-summary.json`,JSON.stringify({generatedAt:new Date().toISOString(),fuelFinderRows:ff.length,fuelFinderNodeIds:byNode.size,fuelFinderPostcodes:byPC.size,providers:summary,totalComparisons:rows.length},null,2));
-          await writeFile(`${OUT}/fuel-feed-summary.txt`,[
+          const summaryColumns = [
+            "provider",
+            "http_status",
+            "fetch_ok",
+            "response_bytes",
+            "fetch_time_ms",
+            "json_valid",
+            "record_array_path",
+            "record_count",
+            "flattened_price_records",
+            "matched_by_node_id",
+            "matched_by_postcode",
+            "unmatched_price_records",
+            "unique_matched_stations",
+            "price_comparisons",
+            "exact_price_matches",
+            "price_differences",
+            "exact_price_match_percent",
+          ];
+
+          await writeFile(
+            `${OUTPUT_DIR}/fuel-feed-comparison.csv`,
+            [
+              [
+                "provider",
+                "provider_id",
+                "fuel_finder_node_id",
+                "fuel_type",
+                "fuel_finder_price",
+                "provider_price",
+                "difference",
+                "fuel_finder_name",
+                "provider_name",
+                "postcode",
+                "match_method",
+              ]
+                .map(csvEscape)
+                .join(","),
+              ...comparisonRows.map(
+                (row) =>
+                  [
+                    row.provider,
+                    row.provider_id,
+                    row.fuel_finder_node_id,
+                    row.fuel_type,
+                    row.fuel_finder_price,
+                    row.provider_price,
+                    row.difference,
+                    row.fuel_finder_name,
+                    row.provider_name,
+                    row.postcode,
+                    row.match_method,
+                  ]
+                    .map(csvEscape)
+                    .join(","),
+              ),
+              "",
+            ].join("\n"),
+          );
+
+          await writeFile(
+            `${OUTPUT_DIR}/fuel-feed-summary.csv`,
+            [
+              summaryColumns
+                .map(csvEscape)
+                .join(","),
+              ...detailedComparisons.map(
+                (row) =>
+                  summaryColumns
+                    .map((column) =>
+                      csvEscape(row[column]),
+                    )
+                    .join(","),
+              ),
+              "",
+            ].join("\n"),
+          );
+
+          await writeFile(
+            `${OUTPUT_DIR}/fuel-feed-comparison.json`,
+            JSON.stringify(
+              {
+                generated_at:
+                  new Date().toISOString(),
+                fuel_finder_rows:
+                  fuelFinder.length,
+                fuel_finder_columns:
+                  fuelFinderHeaders,
+                fuel_types: fuelTypes,
+                providers:
+                  detailedComparisons,
+                comparisons:
+                  comparisonRows,
+              },
+              null,
+              2,
+            ),
+          );
+
+          const summaryLines: string[] = [
+            "Fuel Feed Analysis",
+            "==================",
+            "",
             `Generated: ${new Date().toISOString()}`,
-            `Fuel Finder rows: ${ff.length}`,
+            `Fuel Finder rows: ${fuelFinder.length}`,
             `Fuel Finder node IDs: ${byNode.size}`,
-            `Fuel Finder postcodes: ${byPC.size}`,
-            `Providers: ${summary.length}`,
-            `Total price comparisons: ${rows.length}`,"",
-            ...summary.map(x=>`${x.provider}: HTTP ${x.status??"ERR"}, ${x.ms} ms, ${x.records} records, ${x.matched} matched, ${x.priceComparisons} price comparisons${x.error?`, ERROR: ${x.error}`:""}`)
-          ].join("\n"));
-          console.log(`Analysis complete. Total price comparisons: ${rows.length}`);
+            `Fuel Finder postcodes: ${byPostcode.size}`,
+            `Providers: ${providerResults.length}`,
+            `Total price comparisons: ${comparisonRows.length}`,
+            "",
+            "Provider results",
+            "----------------",
+            "",
+          ];
+
+          for (const result of detailedComparisons) {
+            summaryLines.push(
+              `${result.provider}`,
+              `  URL: ${result.url}`,
+              `  HTTP status: ${result.http_status ?? "N/A"}`,
+              `  Fetch OK: ${result.fetch_ok}`,
+              `  Response: ${result.response_bytes} bytes`,
+              `  JSON valid: ${result.json_valid}`,
+              `  Record array: ${result.record_array_path}`,
+              `  Records: ${result.record_count}`,
+              `  Price records: ${result.flattened_price_records}`,
+              `  Node ID matches: ${result.matched_by_node_id}`,
+              `  Postcode matches: ${result.matched_by_postcode}`,
+              `  Unmatched price records: ${result.unmatched_price_records}`,
+              `  Unique matched stations: ${result.unique_matched_stations}`,
+              `  Price comparisons: ${result.price_comparisons}`,
+              `  Exact price matches: ${result.exact_price_matches}`,
+              `  Price differences: ${result.price_differences}`,
+              `  Exact match rate: ${result.exact_price_match_percent}%`,
+              `  Fetch time: ${result.fetch_time_ms} ms`,
+              ...(result.error
+                ? [`  Error: ${result.error}`]
+                : []),
+              "",
+            );
+          }
+
+          await writeFile(
+            `${OUTPUT_DIR}/fuel-feed-summary.txt`,
+            summaryLines.join("\n"),
+          );
+
+          console.log("");
+          console.log(
+            "========================================",
+          );
+          console.log("ANALYSIS COMPLETE");
+          console.log(
+            "========================================",
+          );
+          console.log(
+            `Total price comparisons: ${comparisonRows.length}`,
+          );
+          console.log(
+            `Results written to ${OUTPUT_DIR}/`,
+          );
           EOF
-          bun /tmp/analyse.ts
+
+          bun /tmp/analyse-fuel-feeds.ts
 
       - name: Upload analysis results
         uses: actions/upload-artifact@v4
