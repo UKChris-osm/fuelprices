@@ -1,1 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
+  <title>Fuel Finder Forecourts</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQ3jKZ5Q3M4fK1j5M5Q5Q5Q5Q5Q5Q5Q="
+    crossorigin=""
+  >
+
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+
+    .map-status {
+      position: absolute;
+      z-index: 1000;
+      top: 10px;
+      left: 50px;
+      padding: 6px 10px;
+      background: white;
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0,0,0,.3);
+      font: 14px/1.4 sans-serif;
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="status" class="map-status">Loading forecourts…</div>
+
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""
+></script>
+
+<script>
+  const map = L.map("map").setView([54.5, -3.0], 6);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  const status = document.getElementById("status");
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function address(f) {
+    return [
+      f.address_line_1,
+      f.address_line_2,
+      f.city,
+      f.county,
+      f.postcode
+    ].filter(Boolean).map(escapeHtml).join("<br>");
+  }
+
+  fetch("forecourts.json", { cache: "no-cache" })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return response.json();
+    })
+    .then(data => {
+      const bounds = [];
+      const markers = L.layerGroup().addTo(map);
+
+      for (const f of data.forecourts) {
+        const marker = L.marker([f.latitude, f.longitude]);
+
+        const name = escapeHtml(f.trading_name || f.brand_name || "Forecourt");
+
+        marker.bindPopup(`
+          <strong>${name}</strong>
+          ${f.brand_name ? `<br>${escapeHtml(f.brand_name)}` : ""}
+          <p>${address(f)}</p>
+          <small>Node ID: ${escapeHtml(f.node_id)}</small>
+        `);
+
+        marker.addTo(markers);
+        bounds.push([f.latitude, f.longitude]);
+      }
+
+      if (bounds.length) {
+        map.fitBounds(bounds, { padding: [20, 20] });
+      }
+
+      status.textContent =
+        `${data.count.toLocaleString()} forecourts · Updated ${new Date(data.generated_at).toLocaleString()}`;
+    })
+    .catch(error => {
+      console.error(error);
+      status.textContent = `Unable to load forecourt data: ${error.message}`;
+    });
+</script>
+
+</body>
+</html>
