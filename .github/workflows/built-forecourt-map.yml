@@ -1,16 +1,13 @@
-name: Build Forecourt Map Data
+name: Build Forecourt Data
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "datasets/fueldata.csv"
 
 permissions:
   contents: write
 
 jobs:
-  build-map-data:
+  build-forecourt-data:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,133 +17,21 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Generate forecourt JSON
-        shell: bash
-        run: |
-          cat > /tmp/build-forecourt-map.ts <<'EOF'
-          import { readFile, writeFile } from "node:fs/promises";
+      - name: Build forecourt data
+        run: bun scripts/build-forecourt-data.ts
 
-          const INPUT = "datasets/fueldata.csv";
-          const OUTPUT = "docs/forecourts.json";
-
-          function parseCsvLine(line: string): string[] {
-            const result: string[] = [];
-            let current = "";
-            let quoted = false;
-
-            for (let i = 0; i < line.length; i++) {
-              const ch = line[i];
-
-              if (ch === '"') {
-                if (quoted && line[i + 1] === '"') {
-                  current += '"';
-                  i++;
-                } else {
-                  quoted = !quoted;
-                }
-              } else if (ch === "," && !quoted) {
-                result.push(current);
-                current = "";
-              } else {
-                current += ch;
-              }
-            }
-
-            result.push(current);
-            return result;
-          }
-
-          function numberOrNull(value: string): number | null {
-            const n = Number(value.trim());
-            return Number.isFinite(n) ? n : null;
-          }
-
-          function text(value: string): string {
-            return value.trim();
-          }
-
-          const csv = await readFile(INPUT, "utf8");
-          const lines = csv.split(/\r?\n/).filter(Boolean);
-
-          if (lines.length < 2) {
-            throw new Error(`No data rows found in ${INPUT}`);
-          }
-
-          const headers = parseCsvLine(lines[0]);
-          const index = new Map(headers.map((header, i) => [header, i]));
-
-          function field(row: string[], name: string): string {
-            const i = index.get(name);
-            return i === undefined ? "" : row[i] ?? "";
-          }
-
-          const forecourts = [];
-
-          for (const line of lines.slice(1)) {
-            const row = parseCsvLine(line);
-
-            const latitude = numberOrNull(
-              field(row, "forecourts.location.latitude"),
-            );
-            const longitude = numberOrNull(
-              field(row, "forecourts.location.longitude"),
-            );
-
-            // A map marker is impossible without valid coordinates.
-            if (latitude === null || longitude === null) continue;
-
-            const nodeId = text(field(row, "forecourts.node_id"));
-            if (!nodeId) continue;
-
-            forecourts.push({
-              node_id: nodeId,
-              trading_name: text(field(row, "forecourts.trading_name")),
-              brand_name: text(field(row, "forecourts.brand_name")),
-              postcode: text(field(row, "forecourts.location.postcode")),
-              address_line_1: text(
-                field(row, "forecourts.location.address_line_1"),
-              ),
-              address_line_2: text(
-                field(row, "forecourts.location.address_line_2"),
-              ),
-              city: text(field(row, "forecourts.location.city")),
-              county: text(field(row, "forecourts.location.county")),
-              latitude,
-              longitude,
-            });
-          }
-
-          const output = {
-            generated_at: new Date().toISOString(),
-            source: INPUT,
-            count: forecourts.length,
-            forecourts,
-          };
-
-          await writeFile(
-            OUTPUT,
-            JSON.stringify(output),
-            "utf8",
-          );
-
-          console.log(`Generated ${OUTPUT}`);
-          console.log(`Forecourts: ${forecourts.length}`);
-          EOF
-
-          bun /tmp/build-forecourt-map.ts
-
-      - name: Commit updated map data
+      - name: Commit generated data
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add docs/forecourts.json
+          git add docs/forecourts.json docs/fuelprices-csv.json
 
           if git diff --cached --quiet; then
-            echo "No changes to forecourt map data."
+            echo "No changes to generated data."
             exit 0
           fi
 
-          git commit -m "Update forecourt map data"
+          git commit -m "Update forecourt and CSV fuel price data"
           git push
