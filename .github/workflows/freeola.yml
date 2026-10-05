@@ -30,7 +30,7 @@ jobs:
             --output "$OUTPUT" \
             --write-out "HTTP=%{http_code}\nDNS=%{time_namelookup}s\nCONNECT=%{time_connect}s\nTLS=%{time_appconnect}s\nTTFB=%{time_starttransfer}s\nTOTAL=%{time_total}s" \
             --header "Content-Type: application/json" \
-            --data "{\"token\":\"${FREEOLA_TOKEN}\",\"batches\":[1,2,3]}" \
+            --data "{\"token\":\"${FREEOLA_TOKEN}\",\"batches\":[6]}" \
             "$URL")
 
           CURL_EXIT=$?
