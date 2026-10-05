@@ -6,7 +6,8 @@
   "type": "module",
   "packageManager": "bun@1.4.2",
   "scripts": {
-    "check:types": "tsc --noEmit"
+    "check:types": "tsc --noEmit",
+    "build:forecourt-data": "bun run scripts/build-forecourt-data.ts"
   },
   "contributors": [
     "UKChris-osm",
