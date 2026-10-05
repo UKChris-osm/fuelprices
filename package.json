@@ -6,8 +6,7 @@
   "type": "module",
   "packageManager": "bun@1.4.2",
   "scripts": {
-    "check:types": "tsc --noEmit",
-    "fetch": "bun run scripts/fetch.ts"
+    "check:types": "tsc --noEmit"
   },
   "contributors": [
     "UKChris-osm",
