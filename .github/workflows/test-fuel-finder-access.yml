@@ -1,0 +1,129 @@
+name: Test Fuel Finder Access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-access:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Test Fuel Finder token endpoint
+        run: |
+          cat > /tmp/test-fuel-finder.ts <<'EOF'
+          const URL =
+            "https://www.developer.fuel-finder.service.gov.uk/fuel-finder/internal-api/download-csv";
+
+          type Test = {
+            name: string;
+            headers: Record<string, string>;
+          };
+
+          const tests: Test[] = [
+            {
+              name: "1 - Bare request",
+              headers: {},
+            },
+            {
+              name: "2 - Browser User-Agent",
+              headers: {
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+              },
+            },
+            {
+              name: "3 - Browser + Origin",
+              headers: {
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Origin":
+                  "https://www.developer.fuel-finder.service.gov.uk",
+                "Referer":
+                  "https://www.developer.fuel-finder.service.gov.uk/",
+              },
+            },
+            {
+              name: "4 - Full browser-like request",
+              headers: {
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-GB,en;q=0.9",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Origin":
+                  "https://www.developer.fuel-finder.service.gov.uk",
+                "Referer":
+                  "https://www.developer.fuel-finder.service.gov.uk/",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
+              },
+            },
+          ];
+
+          for (const test of tests) {
+            console.log("");
+            console.log("=".repeat(70));
+            console.log(test.name);
+            console.log("=".repeat(70));
+
+            try {
+              const response = await fetch(URL, {
+                method: "GET",
+                headers: test.headers,
+              });
+
+              console.log(`HTTP ${response.status} ${response.statusText}`);
+
+              console.log("Response headers:");
+
+              for (const [name, value] of response.headers) {
+                const lower = name.toLowerCase();
+
+                // Never print cookies or other potentially sensitive values.
+                if (
+                  lower === "set-cookie" ||
+                  lower === "cookie" ||
+                  lower.includes("authorization")
+                ) {
+                  console.log(`${name}: [REDACTED]`);
+                } else {
+                  console.log(`${name}: ${value}`);
+                }
+              }
+
+              const body = await response.text();
+
+              console.log("Response body:");
+
+              // Don't accidentally dump a token if one is returned.
+              try {
+                const json = JSON.parse(body);
+
+                if (json && typeof json === "object") {
+                  if ("token" in json) {
+                    json.token = "[REDACTED]";
+                  }
+                }
+
+                console.log(JSON.stringify(json, null, 2));
+              } catch {
+                console.log(body.slice(0, 1000));
+              }
+            } catch (error) {
+              console.log("REQUEST ERROR");
+              console.log(error);
+            }
+          }
+          EOF
+
+          bun /tmp/test-fuel-finder.ts
