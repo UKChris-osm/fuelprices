@@ -1,0 +1,38 @@
+name: Test Fuel Finder Hosts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test hosts
+        run: |
+          set -x
+
+          echo "=== DNS ==="
+          getent hosts www.fuel-finder.service.gov.uk
+          getent hosts developer.fuel-finder.service.gov.uk
+
+          echo
+          echo "=== Developer site ==="
+          curl -Ivs \
+            https://www.developer.fuel-finder.service.gov.uk/ \
+            2>&1 | tail -40
+
+          echo
+          echo "=== Developer API endpoint ==="
+          curl -Ivs \
+            https://www.developer.fuel-finder.service.gov.uk/fuel-finder/internal-api/download-csv \
+            2>&1 | tail -50
+
+          echo
+          echo "=== Main Fuel Finder host ==="
+          curl -Ivs \
+            https://www.fuel-finder.service.gov.uk/ \
+            2>&1 | tail -40
