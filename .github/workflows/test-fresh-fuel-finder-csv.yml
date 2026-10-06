@@ -1,0 +1,208 @@
+name: Test Fresh Fuel Finder CSV Download
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  download-fuel-csv:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Download and decrypt fresh Fuel Finder CSV
+        run: |
+          cat > /tmp/download-fuel-csv.ts <<'EOF'
+          import { createHash, createDecipheriv } from "node:crypto";
+          import { writeFile } from "node:fs/promises";
+
+          const COOKIE_URL =
+            "https://www.developer.fuel-finder.service.gov.uk/fuel-finder/internal-api/download-csv";
+
+          const PRESIGNED_URL =
+            "https://www.fuel-finder.service.gov.uk/internal/v1.0.2/csv/generate-presigned-url";
+
+          const OUTPUT = "/tmp/fueldata.csv";
+
+          // This is the client-side application string used by the Fuel Finder
+          // website to derive its AES-256-CBC key.
+          const APP_STRING =
+            "wAndRKxKefFpcuAMQyObcik5zkthu80KcrvK7av3oXCUeyjm3HyzZUuFvR9UN97Kd6jGJANMU9K3TITw1dCPLc";
+
+          function fail(message: string): never {
+            throw new Error(message);
+          }
+
+          console.log("Requesting fresh Fuel Finder download token...");
+
+          const tokenResponse = await fetch(COOKIE_URL, {
+            headers: {
+              "Accept": "application/json",
+              "Origin": "https://www.developer.fuel-finder.service.gov.uk",
+              "Referer":
+                "https://www.developer.fuel-finder.service.gov.uk/",
+            },
+          });
+
+          if (!tokenResponse.ok) {
+            fail(
+              `Token endpoint returned HTTP ${tokenResponse.status} ${tokenResponse.statusText}`,
+            );
+          }
+
+          const tokenData = (await tokenResponse.json()) as {
+            success?: boolean;
+            token?: string;
+          };
+
+          if (!tokenData.success || !tokenData.token) {
+            fail("Token endpoint did not return a usable token.");
+          }
+
+          console.log("Requesting encrypted presigned URL...");
+
+          const urlResponse = await fetch(PRESIGNED_URL, {
+            headers: {
+              "Accept": "application/json",
+              "Cookie": `x-downloadcsv-cookie=${tokenData.token}`,
+              "Origin": "https://www.developer.fuel-finder.service.gov.uk",
+              "Referer":
+                "https://www.developer.fuel-finder.service.gov.uk/",
+            },
+          });
+
+          if (!urlResponse.ok) {
+            fail(
+              `Presigned URL endpoint returned HTTP ${urlResponse.status} ${urlResponse.statusText}`,
+            );
+          }
+
+          const encrypted = (await urlResponse.json()) as {
+            nxhex?: string;
+            iv?: string;
+          };
+
+          if (!encrypted.nxhex || !encrypted.iv) {
+            fail("Presigned URL response did not contain nxhex and iv.");
+          }
+
+          console.log("Decrypting presigned URL...");
+
+          const key = createHash("sha256")
+            .update(APP_STRING.trim())
+            .digest();
+
+          const iv = Buffer.from(encrypted.iv, "hex");
+          const ciphertext = Buffer.from(encrypted.nxhex, "hex");
+
+          if (iv.length !== 16) {
+            fail(`Unexpected IV length: ${iv.length} bytes`);
+          }
+
+          const decipher = createDecipheriv("aes-256-cbc", key, iv);
+          const plaintext = Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final(),
+          ]).toString("utf8");
+
+          let decrypted: { redirectUrl?: string };
+
+          try {
+            decrypted = JSON.parse(plaintext);
+          } catch {
+            fail("Decrypted response was not valid JSON.");
+          }
+
+          if (!decrypted.redirectUrl) {
+            fail("Decrypted response did not contain redirectUrl.");
+          }
+
+          const redirectUrl = decrypted.redirectUrl;
+
+          if (
+            !redirectUrl.startsWith(
+              "https://ff-raw-data-bronze-ics-prod.s3.eu-west-2.amazonaws.com/",
+            )
+          ) {
+            fail("Presigned URL has an unexpected host.");
+          }
+
+          console.log("Downloading fresh CSV...");
+
+          const csvResponse = await fetch(redirectUrl);
+
+          if (!csvResponse.ok) {
+            fail(
+              `CSV endpoint returned HTTP ${csvResponse.status} ${csvResponse.statusText}`,
+            );
+          }
+
+          const csv = await csvResponse.text();
+
+          if (csv.length < 100_000) {
+            fail(`CSV is suspiciously small: ${csv.length} bytes`);
+          }
+
+          const firstLine = csv.split(/\r?\n/, 1)[0];
+
+          const requiredHeaders = [
+            "forecourts.node_id",
+            "forecourts.trading_name",
+            "forecourts.location.postcode",
+            "forecourts.location.latitude",
+            "forecourts.location.longitude",
+            "forecourts.fuel_price.E10",
+          ];
+
+          for (const header of requiredHeaders) {
+            if (!firstLine.includes(header)) {
+              fail(`CSV is missing expected header: ${header}`);
+            }
+          }
+
+          const rowCount = csv.split(/\r?\n/).filter(Boolean).length - 1;
+
+          if (rowCount < 1000) {
+            fail(`CSV contains suspiciously few rows: ${rowCount}`);
+          }
+
+          await writeFile(OUTPUT, csv, "utf8");
+
+          console.log(`Downloaded ${csv.length.toLocaleString()} bytes.`);
+          console.log(`CSV data rows: ${rowCount.toLocaleString()}`);
+          console.log(`Temporary file: ${OUTPUT}`);
+
+          // Only reveal non-sensitive diagnostics.
+          console.log("Fresh Fuel Finder CSV download succeeded.");
+          EOF
+
+          bun /tmp/download-fuel-csv.ts
+
+          cp /tmp/fueldata.csv datasets/fueldata.csv
+
+      - name: Show changed file
+        run: |
+          ls -lh datasets/fueldata.csv
+          git diff --stat -- datasets/fueldata.csv
+
+      - name: Commit fresh fuel data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add datasets/fueldata.csv
+
+          if git diff --cached --quiet; then
+            echo "No changes to fuel data."
+            exit 0
+          fi
+
+          git commit -m "Update Fuel Finder CSV data"
+          git push
