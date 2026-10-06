@@ -1,0 +1,25 @@
+name: Test Fuel Finder Browser Headers
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test Fuel Finder endpoint
+        run: |
+          set -e
+
+          curl -i --http2 \
+            --max-time 20 \
+            -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36 Edg/154.0.0.0' \
+            -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7' \
+            -H 'Accept-Language: en-GB,en-US;q=0.9,en;q=0.8' \
+            -H 'Upgrade-Insecure-Requests: 1' \
+            -H 'Sec-Fetch-Dest: document' \
+            -H 'Sec-Fetch-Mode: navigate' \
+            -H 'Sec-Fetch-Site: none' \
+            -H 'Sec-Fetch-User: ?1' \
+            'https://www.developer.fuel-finder.service.gov.uk/fuel-finder/internal-api/download-csv'
