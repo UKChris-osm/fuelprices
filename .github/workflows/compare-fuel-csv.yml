@@ -37,11 +37,22 @@ jobs:
               '{token: $token}')" \
             "$BROKER_URL")
 
+
           if [ "$HTTP_CODE" != "200" ]; then
             echo "Freeola returned HTTP $HTTP_CODE"
-            # Print only a generic error, never the response containing a URL.
+
+            if jq -e 'type == "object"' "$RESPONSE" >/dev/null 2>&1; then
+              echo "Broker error: $(jq -r '.error // "unknown_error"' "$RESPONSE")"
+              echo "Message: $(jq -r '.message // "No error message supplied"' "$RESPONSE")"
+            else
+              echo "The response was not JSON. Checking its content type and first line:"
+              file --mime-type "$RESPONSE"
+              head -n 1 "$RESPONSE" | cut -c 1-200
+            fi
+
             exit 1
           fi
+
 
           S3_URL=$(jq -er \
             '.redirectUrl // .data.redirectUrl // empty' "$RESPONSE")
