@@ -1,0 +1,127 @@
+
+name: Compare Fresh Fuel Finder CSV
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-csv:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Obtain fresh S3 URL and download CSV
+        env:
+          FREEOLA_TOKEN: ${{ secrets.FREEOLA }}
+        run: |
+          set -euo pipefail
+
+          BROKER_URL="https://haignet.co.uk/fuel-csv.php"
+          RESPONSE="/tmp/fuel-csv-broker.json"
+          OUTPUT="datasets/fueldata-actions.csv"
+
+          echo "Requesting a fresh download URL from Freeola..."
+
+          HTTP_CODE=$(curl \
+            --silent --show-error \
+            --max-time 60 \
+            --output "$RESPONSE" \
+            --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -cn --arg token "$FREEOLA_TOKEN" \
+              '{token: $token}')" \
+            "$BROKER_URL")
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Freeola returned HTTP $HTTP_CODE"
+            # Print only a generic error, never the response containing a URL.
+            exit 1
+          fi
+
+          S3_URL=$(jq -er \
+            '.redirectUrl // .data.redirectUrl // empty' "$RESPONSE")
+
+          case "$S3_URL" in
+            https://ff-raw-data-bronze-ics-prod.s3.eu-west-2.amazonaws.com/*)
+              ;;
+            *)
+              echo "The broker returned an unexpected download URL."
+              exit 1
+              ;;
+          esac
+
+          echo "Downloading CSV directly from S3..."
+
+          curl \
+            --fail --silent --show-error --location \
+            --retry 2 \
+            --max-time 300 \
+            --output "$OUTPUT" \
+            "$S3_URL"
+
+          rm -f "$RESPONSE"
+          unset S3_URL
+
+          if [ ! -s "$OUTPUT" ] || [ "$(wc -c < "$OUTPUT")" -lt 100000 ]; then
+            echo "Downloaded file is empty or suspiciously small."
+            exit 1
+          fi
+
+          if ! head -n 1 "$OUTPUT" | grep -Fq 'forecourts.node_id'; then
+            echo "Downloaded file does not have the expected CSV header."
+            exit 1
+          fi
+
+          echo "Download validated."
+          ls -lh "$OUTPUT"
+
+      - name: Compare downloaded and existing datasets
+        run: |
+          set -euo pipefail
+
+          ORIGINAL="datasets/fueldata.csv"
+          FRESH="datasets/fueldata-actions.csv"
+
+          if [ ! -s "$ORIGINAL" ]; then
+            echo "Existing reference dataset is missing."
+            exit 1
+          fi
+
+          ORIGINAL_SIZE=$(wc -c < "$ORIGINAL")
+          FRESH_SIZE=$(wc -c < "$FRESH")
+          ORIGINAL_HASH=$(sha256sum "$ORIGINAL" | cut -d ' ' -f 1)
+          FRESH_HASH=$(sha256sum "$FRESH" | cut -d ' ' -f 1)
+
+          if cmp -s "$ORIGINAL" "$FRESH"; then
+            RESULT="IDENTICAL"
+            echo "Both CSV files are byte-for-byte identical."
+          else
+            RESULT="DIFFERENT"
+            echo "The CSV files differ; this does not necessarily mean the download failed."
+          fi
+
+          {
+            echo "## Fuel Finder CSV comparison"
+            echo
+            echo "| Check | Existing CSV | Fresh Actions CSV |"
+            echo "|---|---:|---:|"
+            echo "| File size (bytes) | $ORIGINAL_SIZE | $FRESH_SIZE |"
+            echo "| SHA-256 | \`$ORIGINAL_HASH\` | \`$FRESH_HASH\` |"
+            echo
+            echo "**Result: $RESULT**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Comparison result: $RESULT"
+
+      - name: Save downloaded CSV as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fueldata-actions-csv
+          path: datasets/fueldata-actions.csv
+          if-no-files-found: error
+          retention-days: 7
