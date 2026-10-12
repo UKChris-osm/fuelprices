@@ -3,6 +3,8 @@ name: Compare Fresh Fuel Finder CSV
 
 on:
   workflow_dispatch:
+  schedule:
+     - cron: "5 10,16 * * *"
 
 permissions:
   contents: read
