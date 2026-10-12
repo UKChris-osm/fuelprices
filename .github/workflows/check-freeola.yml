@@ -1,0 +1,22 @@
+name: 1.1 - Run Freeola Check
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  Run-TypeScript-Check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Freeola Check
+        run: bun run check:freeola
