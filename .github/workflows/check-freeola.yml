@@ -18,4 +18,6 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Freeola Check
+        env:
+          FREEOLA_TOKEN: ${{ secrets.FREEOLA }}
         run: bun run check:freeola
