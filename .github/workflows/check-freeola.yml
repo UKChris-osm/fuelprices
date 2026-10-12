@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  Run-TypeScript-Check:
+  Run-Freeola-Check:
     runs-on: ubuntu-latest
 
     steps:
