@@ -7,6 +7,7 @@
   "packageManager": "bun@1.4.3",
   "scripts": {
     "check:types": "bun check",
+    "check:freeola": "bun run scripts/freeola.ts",
     "build:forecourt-data": "bun run scripts/build-forecourt-data.ts"
   },
   "contributors": [
@@ -14,7 +15,7 @@
     "haignet.co.uk"
   ],
   "devDependencies": {
-    "@types/bun": "1.4.2"
+    "@types/bun": "1.4.3"
   },
   "engines": {
     "bun": "1.4.3"
