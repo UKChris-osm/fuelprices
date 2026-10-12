@@ -1,7 +1,6 @@
 name: 1.1 - Run Freeola Check
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
