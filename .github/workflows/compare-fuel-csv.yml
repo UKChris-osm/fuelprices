@@ -130,7 +130,7 @@ jobs:
           echo "Comparison result: $RESULT"
 
       - name: Save downloaded CSV as an artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fueldata-actions-csv
           path: datasets/fueldata-actions.csv
