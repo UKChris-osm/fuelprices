@@ -8,6 +8,7 @@
   "scripts": {
     "check:types": "bun check",
     "check:freeola": "bun run scripts/freeola.ts",
+    "build:download": "bun run scripts/download-csv.ts",
     "build:forecourt-data": "bun run scripts/build-forecourt-data.ts"
   },
   "contributors": [
