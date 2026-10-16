@@ -1,4 +1,4 @@
-name: 2 - Download SVF File
+name: 2 - Download CSV File
 
 on:
   workflow_dispatch:
