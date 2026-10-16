@@ -1,0 +1,29 @@
+name: 2 - Download SVF File
+
+on:
+  workflow_dispatch:
+  schedule:
+     - cron: "5 10,16 * * *"
+       timezone: "Europe/London"
+
+permissions:
+  contents: write
+
+jobs:
+  Download-CSV-File:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download CSV file
+        env:
+          FREEOLA_TOKEN: ${{ secrets.FREEOLA }}
+        run: bun run build:download
