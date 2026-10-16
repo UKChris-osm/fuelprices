@@ -1,4 +1,4 @@
-import { getFreshCsvDownload } from "./freeola.ts";
+import { getFreshCsvDownload } from "./freeola";
 
 // Basic test: request and validate a fresh download URL.
 try {
