@@ -4,7 +4,7 @@
   "description": "Fuel price information across the UK.",
   "private": false,
   "type": "module",
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "check:types": "bun check",
     "check:freeola": "bun run scripts/freeola.ts",
@@ -19,6 +19,6 @@
     "@types/bun": "1.4.3"
   },
   "engines": {
-    "bun": "1.4.3"
+    "bun": "1.4.4"
   }
 }
