@@ -21,7 +21,7 @@ jobs:
       - name: Prepare files from /docs/
         run: |
           mkdir -p _site
-          cp -r docs/* _site/
+          cp -a docs/. _site/
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
