@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 631" role="img" aria-label="Murco logo">
+  <rect width="800" height="631" fill="#ed1738"/>
+  <g transform="translate(0 45)">
+  <circle cx="400" cy="160" r="159" fill="#064581"/>
+  <path d="M 349,52 L 346,54 L 345,60 L 366,131 L 352,132 L 322,129 L 288,128 L 284,133 L 284,136 L 288,140 L 331,158 L 334,158 L 357,169 L 307,225 L 306,232 L 310,235 L 314,235 L 380,198 L 382,200 L 394,274 L 395,276 L 402,277 L 406,273 L 418,200 L 420,198 L 485,235 L 490,235 L 493,232 L 493,225 L 454,183 L 443,169 L 449,165 L 514,139 L 515,132 L 514,129 L 511,128 L 448,131 L 436,133 L 434,131 L 455,58 L 454,55 L 450,52 L 446,52 L 443,54 L 405,110 L 400,115 L 392,106 L 357,55 L 354,52 Z" fill="#fff" stroke="#fff" stroke-width="0.7" stroke-linejoin="round"/>
+  <circle cx="400" cy="160" r="24.5" fill="#ed1738"/>
+  </g>
+  <text x="400" y="545" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="139" font-weight="700" letter-spacing="-3" textLength="630" lengthAdjust="spacingAndGlyphs" fill="#fff">MURCO</text>
+</svg>
