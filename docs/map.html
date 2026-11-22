@@ -26,8 +26,25 @@ for(const f of data.forecourts||[]){if(typeof f.latitude!=='number'||typeof f.lo
 const marker=L.marker([f.latitude,f.longitude]);
 const address=[f.address_line_1,f.address_line_2,f.city,f.county,f.postcode].filter(Boolean).join(', ');
 const brandText=`${f.trading_name||''} ${f.brand_name||''}`;
-const brandIcon=/\bbp\b/i.test(brandText)?'media/bp-icon.svg':/\bmorrison'?s?\b/i.test(brandText)?'media/morrisons-icon.svg':/\basda\b/i.test(brandText)?'media/asda-icon.svg':/\btesco\b/i.test(brandText)?'media/tesco-icon.svg':/\bsainsbury'?s?\b/i.test(brandText)?'media/sainsburys-icon.svg':null;
-const iconHtml=brandIcon?`<img src="${brandIcon}" alt="" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:6px">`:'';
+
+//const brandIcon=/\bbp\b/i.test(brandText)?'media/bp-icon.svg':/\bmorrison'?s?\b/i.test(brandText)?'media/morrisons-icon.svg':/\basda\b/i.test(brandText)?'media/asda-icon.svg':/\btesco\b/i.test(brandText)?'media/tesco-icon.svg':/\bsainsbury'?s?\b/i.test(brandText)?'media/sainsburys-icon.svg':null;
+
+const brandLogos = [
+  [["asda"], "asda-icon.svg"],
+  [["bp"], "bp-icon.svg"],
+  [["morrisons", "morrison's"], "morrisons-icon.svg"],
+  [["sainsbury", "sainsburys", "sainsbury's"], "sainsburys-icon.svg"],
+  [["tesco"], "tesco-icon.svg"]
+];
+
+const brandIcon = brandLogos.find(([names]) =>
+  names.some(name => new RegExp(`\\b${name}\\b`, 'i').test(brandText))
+)?.[1];
+
+const brandIconPath = brandIcon ? `media/${brandIcon}` : null;
+const iconHtml=brandIconPath?`<img src="${brandIconPath}" alt="" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:6px">`:'';
+                                    
+//const iconHtml=brandIcon?`<img src="${brandIcon}" alt="" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:6px">`:'';
 const popup=`${iconHtml}<strong>${escapeHtml(f.trading_name||'Forecourt')}</strong>${f.brand_name?`<br>${escapeHtml(f.brand_name)}`:''}${address?`<br><br>${escapeHtml(address)}`:''}${f.node_id?`<br><br><small>Node ID: ${escapeHtml(f.node_id)}</small>`:''}`;
 marker.bindPopup(popup);markers.addLayer(marker);bounds.push([f.latitude,f.longitude]);added++}
 map.addLayer(markers);if(bounds.length)map.fitBounds(bounds,{padding:[20,20]});else map.setView([54.5,-3],6);
